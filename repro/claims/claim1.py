@@ -262,8 +262,9 @@ def run() -> dict:
         confidence=("HIGH" if (all_ok and determinacy >= 0.8) else
                     ("MEDIUM" if all_ok else "LOW")),
         headline=(f"o(1/k) established in {sum(r['little_o_1_over_k'] for r in rows)}/"
-                  f"{len(rows)} configs and refuted in "
-                  f"{sum(r['established_not_little_o'] for r in rows)}, limit-point "
+                  f"{len(rows)} configs, {len(counterexamples)} surviving counterexample(s) "
+                  f"({len(apparent)} apparent, {len(transient)} shown pre-asymptotic at "
+                  f"{PERSIST_MULT}x the horizon), limit-point "
                   f"characterisation in {nash}/{len(rows)}, {len(undet)} inconclusive; "
                   f"Assumption-2.6 control fails as the paper predicts"),
         n_configs=len(rows), n_determined=len(det), n_inconclusive=len(undet),
