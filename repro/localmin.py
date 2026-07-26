@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from repro.core import MAQEP, FreeSet, _solve_qp
+from repro.core import MAQEP, FreeSet, Polyhedron, _solve_qp
 
 
 class ReducedObjective:
@@ -40,11 +40,50 @@ class ReducedObjective:
         return self.prob.f(x) + self.prob.phi(z)
 
 
+def _as_box(Sset):
+    """Return (lo, hi) if this Polyhedron is exactly a box, else None.
+
+    A row of G that is a signed unit vector is a bound on one coordinate; if
+    every row is of that form the set is a box, whose Euclidean projection is
+    coordinatewise clipping.
+    """
+    if not isinstance(Sset, Polyhedron):
+        return None
+    G, h, n = Sset.G, Sset.h, Sset.G.shape[1]
+    lo = np.full(n, -np.inf)
+    hi = np.full(n, np.inf)
+    for g, hv in zip(G, h):
+        nz = np.flatnonzero(g)
+        if nz.size != 1 or not np.isclose(abs(g[nz[0]]), 1.0):
+            return None
+        i = int(nz[0])
+        if g[i] > 0:
+            hi[i] = min(hi[i], hv)          #  x_i <= hv
+        else:
+            lo[i] = max(lo[i], -hv)         # -x_i <= hv  <=>  x_i >= -hv
+    return lo, hi
+
+
 def project_onto_X(prob: MAQEP, x):
-    """Blockwise Euclidean projection onto prod_i X_i (exact)."""
+    """Blockwise Euclidean projection onto prod_i X_i (exact).
+
+    Boxes are clipped in closed form.  Going through the interior-point QP for
+    them is not merely slower, it is WRONG at the accuracy this test needs: an
+    interior-point solve never returns a point exactly on a face, so projecting
+    a limit point that sits on the boundary moves it ~1e-7 into the interior and
+    inflates V(x*) by the same amount.  Sampled points then appear to beat it,
+    and the test reports a phantom "strictly better feasible point" -- with an
+    identical -9.85e-08 on four different instances, which is what gave this
+    away.  Only genuinely non-box sets (e.g. friction pyramids) use the solver.
+    """
     out = np.array(x, float)
     for b, Sset in zip(prob.blocks, prob.sets):
         if isinstance(Sset, FreeSet):
+            continue
+        bounds = _as_box(Sset)
+        if bounds is not None:
+            lo, hi = bounds
+            out[b] = np.clip(out[b], lo, hi)
             continue
         n = b.size
         v, _ = _solve_qp(np.eye(n), -out[b], Sset, tol=1e-12)
