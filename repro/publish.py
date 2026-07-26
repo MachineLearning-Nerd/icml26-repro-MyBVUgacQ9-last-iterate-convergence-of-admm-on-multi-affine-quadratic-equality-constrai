@@ -352,7 +352,46 @@ def page_limitations(summary):
         L += [f"## {spec['title']}", ""]
         L += [f"- {x}" for x in spec["limitations"]]
         L += [""]
-    L += ["## Scope of the whole reproduction", "",
+    L += [
+        "## A methodological risk this reproduction carries", "",
+        "The rate classifier in `repro/rates.py` was corrected **seven times, after "
+        "seeing that it disagreed with the paper**. Each correction was prompted by "
+        "asking why a claim with visibly strong evidence had come back BLOCKED. That "
+        "is a textbook route to fitting the instrument to the desired answer, and a "
+        "reader should treat it as the main threat to these verdicts. The defects "
+        "were real - among them an envelope certificate requiring six decades of "
+        "decay while every other route required three, which rejected precisely the "
+        "runs that converged *fastest*; an inferred numerical floor that landed above "
+        "every point of a still-decaying sequence; and scoring 'my estimator could "
+        "not decide' as 'the theorem fails here'. But 'the defect was real' is what "
+        "one would say either way.", "",
+        "The concrete defence is that every route added is pinned by a **matched "
+        "negative control** sharing the same noise, floor or truncation as the case "
+        "it was added for, so no route can be passed by tolerating noise or widening "
+        "a window:", "",
+        "| route added | positive case it must accept | matched control it must still reject |",
+        "|---|---|---|",
+        "| geometric envelope, 3-decade bar | `geometric_0.04_floored` | `theta_1_over_k_floored` |",
+        "| tail-supremum envelope | `geometric_0.9_noisy` | `k_pow_-1_noisy` (identical noise) |",
+        "| inferred numerical floor | `geometric_then_plateau_autofloor`, `geometric_truncated_autofloor` | `theta_1_over_k_truncated_autofloor` |",
+        "| direct o(1/k) decay route | `geometric_0.7`, `k_pow_-1.5` | `theta_1_over_k`, `theta_1_over_logk` |",
+        "", "The calibration grew from 5 cases to 12 across these corrections and "
+        "passes 12/12; `Theta(1/k)` is still **positively refuted** as `o(1/k)`, which "
+        "is the single case the whole instrument exists to catch. The calibration is "
+        "run inside every job and its raw output is published at "
+        "[rate_classifier_calibration.json](raw/calibration/rate_classifier_calibration.json), "
+        "so a reader can check the controls rather than take this paragraph on trust.",
+        "",
+        "Two further corrections were to the *problem* code rather than the "
+        "classifier, and both had the same signature - an implausibly identical "
+        "number across unrelated instances. Boxes were being projected through an "
+        "interior-point solver, which never returns a point exactly on a face; that "
+        "moved limit points ~1e-7 into the interior and produced a phantom "
+        "'strictly better feasible point' of -9.8525e-08 on four different instances, "
+        "an apparent falsification of Theorem 3.3's local-minimum clause. Boxes are "
+        "now clipped in closed form. And the headline figure's run filter matched "
+        "`rho_x1` as a substring of `rho_x10`.", "",
+        "## Scope of the whole reproduction", "",
           "- This is a **clean-room** reimplementation from the paper text. No author "
           "code, data or hardware logs were used, because none are published.",
           "- All compute is CPU. Runs longer than a few minutes or needing more than "
