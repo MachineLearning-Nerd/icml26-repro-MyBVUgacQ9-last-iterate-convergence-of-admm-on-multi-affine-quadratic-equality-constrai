@@ -22,11 +22,39 @@ def _sh(cmd):
         return "unavailable"
 
 
-def cpu_count() -> int:
+def cgroup_quota() -> float | None:
+    """CPU quota enforced by the container, if any (cgroup v2 then v1)."""
     try:
-        return len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+        txt = open("/sys/fs/cgroup/cpu.max").read().split()
+        if txt[0] != "max":
+            return float(txt[0]) / float(txt[1])
+    except Exception:
+        pass
+    try:
+        q = float(open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read().strip())
+        p = float(open("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read().strip())
+        if q > 0:
+            return q / p
+    except Exception:
+        pass
+    return None
+
+
+def cpu_count() -> int:
+    """Usable cores: the container quota when one is set, else affinity.
+
+    On Hugging Face `cpu-upgrade` the host reports 64 cores while the container
+    is limited to far fewer; launching one worker per host core would only
+    oversubscribe.
+    """
+    quota = cgroup_quota()
+    try:
+        avail = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
     except AttributeError:
-        return os.cpu_count() or 1
+        avail = os.cpu_count() or 1
+    if quota is not None:
+        return max(1, min(avail, int(quota)))
+    return avail
 
 
 def provenance() -> dict:
@@ -39,7 +67,9 @@ def provenance() -> dict:
         python=sys.version.split()[0],
         platform=platform.platform(),
         machine=platform.machine(),
-        cpu_count_visible=cpu_count(),
+        cpu_count_usable=cpu_count(),
+        cpu_count_host=os.cpu_count(),
+        cgroup_cpu_quota=cgroup_quota(),
         numpy=np.__version__,
         scipy=scipy.__version__,
         global_seed=GLOBAL_SEED,

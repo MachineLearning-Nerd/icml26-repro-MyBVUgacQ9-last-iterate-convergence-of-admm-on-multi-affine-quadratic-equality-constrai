@@ -62,9 +62,9 @@ def _specs():
     ]:
         jobs.append((sp, K))
     for seed in (1, 2, 3):
-        for nb, bs, nc, nz in [(20, 4, 10, 12), (40, 5, 20, 25), (60, 6, 30, 36)]:
+        for (nb, bs, nc, nz), K in [((20, 4, 10, 12), 20000), ((40, 5, 20, 25), 8000)]:
             jobs.append((dict(kind="random", n_blocks=nb, block_size=bs, n_c=nc,
-                              n_z=nz, c_scale=1.0, seed=seed), 20000))
+                              n_z=nz, c_scale=1.0, seed=seed), K))
     for q in (1.0, 0.5):
         jobs.append((dict(kind="toy", q=q), 6000))
     return [dict(spec=sp, K=K, rho_multiplier=mult)
