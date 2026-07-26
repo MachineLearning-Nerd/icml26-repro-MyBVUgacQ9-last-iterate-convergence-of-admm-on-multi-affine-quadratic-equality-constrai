@@ -92,6 +92,7 @@ def build_locomotion(
     contacts: str = "alternating",
     seed: int = 0,
     with_indicators: bool = True,
+    support_band=(0.8, 1.4),
 ) -> MAQEP:
     """Assemble eq. (6) as an MAQEP instance.
 
@@ -186,7 +187,23 @@ def build_locomotion(
         h = np.tile(pyr.h, N)
         for j in range(N):
             G[j * pyr.G.shape[0]:(j + 1) * pyr.G.shape[0], j * dim:(j + 1) * dim] = pyr.G
-        sets = [Polyhedron(G, h, label=f"friction_pyramid(mu={mu_fric:g})xN{N}") for _ in range(T)]
+        # Section 5: "the constraints on f are designed to ensure that the center
+        # of mass remains within a specified target area".  Imposed here in the
+        # block-separable form Assumption 2.3 requires: at every time step the
+        # total normal force stays inside a band around body weight, which keeps
+        # the CoM from falling or being launched.  Without it the least-norm
+        # objective is minimised by f = 0 (free fall) at the cone apex and the
+        # instance is degenerate.
+        if support_band is not None:
+            lo, hi = support_band
+            srow = np.zeros(nf)
+            for j in range(N):
+                srow[j * dim + dim - 1] = 1.0
+            G = np.vstack([G, -srow, srow])
+            h = np.concatenate([h, [-lo * m * g_acc, hi * m * g_acc]])
+        lab = (f"friction_pyramid(mu={mu_fric:g})xN{N}"
+               + (f"+support[{support_band[0]:g},{support_band[1]:g}]mg" if support_band else ""))
+        sets = [Polyhedron(G, h, label=lab) for _ in range(T)]
     else:
         from repro.core import FreeSet
         sets = [FreeSet(nf) for _ in range(T)]
@@ -196,7 +213,8 @@ def build_locomotion(
                  name=f"locomotion{dim}D(T={T},N={N},dt={dt:g})")
     prob.meta = dict(T=T, N=N, dim=dim, D=D, dt=dt, m=m, g=g_acc, mu_fric=mu_fric,
                      fmax=fmax, contacts=contacts, r=r, c_init=c_init,
-                     cdot_init=cdot_init, k_init=k_init, with_indicators=with_indicators)
+                     cdot_init=cdot_init, k_init=k_init, with_indicators=with_indicators,
+                     support_band=support_band)
     return prob
 
 

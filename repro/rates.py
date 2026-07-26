@@ -44,14 +44,11 @@ def valid_window(gap: np.ndarray, floor: float, min_points: int = 4):
     idx = idx[idx >= peak]
     if idx.size < min_points:
         return np.array([], int)
-    # contiguous run from the peak until the sequence first drops to the floor
-    run = [idx[0]]
-    for i in idx[1:]:
-        if i == run[-1] + 1:
-            run.append(i)
-        else:
-            break
-    run = np.asarray(run, int)
+    # every index at or after the peak that is still above the numerical floor.
+    # Contiguity is deliberately NOT required: the ADMM Lagrangian gap is not
+    # monotone, and truncating at the first dip would shorten the window (and so
+    # change the verdict) for reasons unrelated to the asymptotic rate.
+    run = np.asarray(idx, int)
     return run if run.size >= min_points else np.array([], int)
 
 
@@ -142,6 +139,7 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
         # resolution-independent iterations-to-tolerance estimator alone
         out.update(linear=bool(ke.get("k_eps_linear", False)),
                    little_o_1_over_k=bool(ke.get("k_eps_linear", False)),
+                   determined=bool(ke.get("k_eps_linear", False)),
                    reason="regression window empty; k(eps) estimator used")
         return out
 
@@ -172,7 +170,8 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     # with c = 1/cmax > 1.  This works when the run reaches machine precision in
     # a handful of iterations, where a regression has too few points, and it
     # necessarily fails for Theta(1/k) (whose ratios tend to 1).
-    ratios = g[1:] / g[:-1]
+    consec = np.flatnonzero(np.diff(win) == 1)   # only consecutive-iteration pairs
+    ratios = (g[consec + 1] / g[consec]) if consec.size else np.array([])
     cmax = float(ratios.max()) if ratios.size else 1.0
     out.update(max_one_step_ratio=cmax, n_ratios=int(ratios.size),
                median_one_step_ratio=float(np.median(ratios)) if ratios.size else 1.0)
@@ -193,6 +192,10 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     )
     out["linear"] = bool(out["linear_by_regression"] or out["linear_by_envelope"]
                          or ke.get("k_eps_linear", False))
+    # Is there enough decay for ANY verdict to be meaningful?  A run that stops
+    # while the gap is still on its plateau is inconclusive, not a refutation.
+    out["determined"] = bool(decades >= 3.0 and (enough or out["linear_by_envelope"]
+                                                 or ke.get("n_levels", 0) >= 4))
 
     # --- o(1/k) verdict ---
     t = k * g                       # k * gap_k must tend to 0
@@ -220,19 +223,29 @@ def calibrate(K: int = 4000) -> list[dict]:
     """
     k = np.arange(1, K + 1, dtype=float)
     cases = [
-        ("theta_1_over_k", 1.0 / k, dict(linear=False, little_o_1_over_k=False)),
-        ("theta_1_over_logk", 1.0 / np.log(k + 2), dict(linear=False, little_o_1_over_k=False)),
-        ("k_pow_-1.5", k ** -1.5, dict(linear=False, little_o_1_over_k=True)),
-        ("geometric_0.7", 0.7 ** k, dict(linear=True, little_o_1_over_k=True)),
-        ("geometric_0.995", 0.995 ** k, dict(linear=True, little_o_1_over_k=True)),
+        # Theta(1/k) is the sequence the o(1/k) test must reject: it converges,
+        # it is smooth, and a lax test would wave it through.
+        ("theta_1_over_k", 1.0 / k,
+         dict(linear=False, little_o_1_over_k=False, determined=True)),
+        # Theta(1/log k) barely moves over the horizon; the instrument must say
+        # "not determined" rather than guess.
+        ("theta_1_over_logk", 1.0 / np.log(k + 2),
+         dict(linear=False, little_o_1_over_k=False, determined=False)),
+        ("k_pow_-1.5", k ** -1.5,
+         dict(linear=False, little_o_1_over_k=True, determined=True)),
+        ("geometric_0.7", 0.7 ** k,
+         dict(linear=True, little_o_1_over_k=True, determined=True)),
+        ("geometric_0.995", 0.995 ** k,
+         dict(linear=True, little_o_1_over_k=True, determined=True)),
     ]
     rows = []
     for name, seq, expect in cases:
         res = classify(seq, floor=0.0)
-        ok = all(bool(res[key]) == val for key, val in expect.items())
+        ok = all(bool(res.get(key, False)) == val for key, val in expect.items())
         rows.append(dict(case=name, expected=expect,
                          observed=dict(linear=res["linear"],
-                                       little_o_1_over_k=res["little_o_1_over_k"]),
+                                       little_o_1_over_k=res["little_o_1_over_k"],
+                                       determined=res.get("determined", False)),
                          power_alpha=res.get("power_alpha"),
                          c1_estimate=res.get("c1_estimate"),
                          passed=ok))

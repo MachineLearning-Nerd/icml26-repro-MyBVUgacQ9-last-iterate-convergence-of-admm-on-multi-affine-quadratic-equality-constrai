@@ -42,20 +42,24 @@ def limit_point_audit(prob: MAQEP, tr: AdmmTrace, rho: float) -> dict:
     independently of ADMM.  We report the distance from the ADMM limit point.
     """
     x, z = tr.x.copy(), tr.z.copy()
+    res_star = prob.residual(x, z)   # achieved feasibility level at the limit
     devs = []
     for b, Sset in zip(prob.blocks, prob.sets):
         Cx = prob._Cx(x)
         M = Cx[:, b] + prob.d[:, b]
         Ax = prob.A(x, Cx)
         r = Ax - M @ x[b] + prob.Q @ z          # A(x_i, x*_-i) + Qz* = M x_i + r
-        # min 0.5 x_i^T P_bb x_i + g^T x_i  s.t. M x_i + r = 0, x_i in X_i
+        # min 0.5 x_i^T P_bb x_i + g^T x_i  s.t. M x_i + r = res*, x_i in X_i.
+        # Constraining to the *achieved* residual rather than to 0 keeps the
+        # problem feasible at finite precision; x*_i is feasible by construction,
+        # so what is tested is exactly the claim's content -- its optimality.
         Pbb = prob.P[np.ix_(b, b)]
         g = (prob.P @ x)[b] - Pbb @ x[b] + prob.p[b]
-        v = _solve_eq_qp(Pbb, g, M, -r, Sset)
+        v = _solve_eq_qp(Pbb, g, M, res_star - r, Sset)
         devs.append(float(np.linalg.norm(v - x[b])) if v is not None else np.nan)
-    # z*: min phi(z) s.t. Qz = -A(x*)
+    # z*: min phi(z) s.t. A(x*) + Qz = res*
     Ax = prob.A(x)
-    vz = _solve_eq_qp(prob.S, prob.s, prob.Q, -Ax, FreeSet(prob.n_z))
+    vz = _solve_eq_qp(prob.S, prob.s, prob.Q, res_star - Ax, FreeSet(prob.n_z))
     dz = float(np.linalg.norm(vz - z)) if vz is not None else np.nan
     return dict(
         max_block_deviation=float(np.nanmax(devs)) if devs else 0.0,
