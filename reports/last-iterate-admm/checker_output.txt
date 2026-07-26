@@ -1,0 +1,24 @@
+==============================================================================
+INDEPENDENT CHECKER -- verdicts re-derived from the raw artifacts alone
+==============================================================================
+
+  claim    recorded    re-derived  agree
+  claim1   VERIFIED    VERIFIED    yes
+  claim2   VERIFIED    VERIFIED    yes
+  claim3   VERIFIED    VERIFIED    yes
+  claim4   VERIFIED    VERIFIED    yes
+  claim5   BLOCKED     BLOCKED     yes
+  claim6   BLOCKED     BLOCKED     yes
+
+  findings:
+    - calibration: 12/12 cases correct
+    - assumption audit: 9/9 instances satisfy Assumptions 2.3/2.6 and Definition 2.1
+    - claim1: 24/25 determined configs show o(1/k), 30/30 confirm the limit-point characterisation, 5 inconclusive
+    - claim1: 4 apparent counterexample(s) re-tested at a longer horizon; 0 survived, 4 were pre-asymptotic transients
+    - claim2: certificate holds in 11 determined configs; geometric in 11, local minimum in 11; certificate conservative vs bisected onset: True
+    - claim3: 10/10 instances in the Theorem 3.3 regime; local gap geometric in 5, local minimum in 10
+    - claim4: measured exponent 3.0000; geometric in 23/23 determined runs with dt <= t_0 = 1.48073s
+    - claim5: q>=10 geometric in 64/64; ADMM fastest to tolerance in 21/36 multi-affine and 58/72 linear-constraint configurations
+    - claim6: simulation half -- 65/65 determined runs geometric over 66 solves; Figure 3 curves recorded for 3 Delta t values
+
+  independent check: PASS
