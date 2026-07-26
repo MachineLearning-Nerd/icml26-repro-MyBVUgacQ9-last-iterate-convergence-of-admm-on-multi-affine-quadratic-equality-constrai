@@ -130,3 +130,30 @@ def _csvval(v):
     if isinstance(v, (list, tuple, dict)):
         return json.dumps(v, default=_jsonable)
     return v
+
+
+def dump_artifacts_to_log(marker: str = "ORX-ARTIFACT-BUNDLE") -> None:
+    """Emit the whole artifact tree to stdout as a base64 gzip tarball.
+
+    In local mode the run's filesystem is discarded when the job ends and the log
+    is the only evidence channel, so every raw CSV/JSON the claims produce is
+    written into the log here and extracted afterwards with
+    `python -m repro.extract_bundle`.
+    """
+    import base64
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        if os.path.isdir(ARTIFACTS):
+            # the paper text is already versioned in git; excluding it keeps the
+            # in-log bundle small
+            tar.add(ARTIFACTS, arcname="artifacts",
+                    filter=lambda ti: None if "/paper/" in ti.name + "/" else ti)
+    blob = base64.b64encode(buf.getvalue()).decode()
+    print(f"\n{marker}-BEGIN sha256={__import__('hashlib').sha256(blob.encode()).hexdigest()} "
+          f"bytes={len(blob)}")
+    for i in range(0, len(blob), 4000):
+        print(blob[i:i + 4000])
+    print(f"{marker}-END")

@@ -25,7 +25,7 @@ import time
 
 import numpy as np
 
-from repro.provenance import banner, provenance, write_artifact
+from repro.provenance import banner, dump_artifacts_to_log, provenance, write_artifact
 from repro.rates import calibrate
 
 CLAIM_MODULES = [
@@ -144,6 +144,9 @@ def main() -> int:
     # check reports an internal failure
     hard_fail = (not cal["passed"]) or (not aud["passed"]) or any(
         r.get("internal_failure") for r in results.values())
+    banner("ARTIFACT BUNDLE (raw CSV/JSON, base64 gzip tar)")
+    dump_artifacts_to_log()
+
     print(f"\n  exit: {1 if hard_fail else 0}")
     return 1 if hard_fail else 0
 
