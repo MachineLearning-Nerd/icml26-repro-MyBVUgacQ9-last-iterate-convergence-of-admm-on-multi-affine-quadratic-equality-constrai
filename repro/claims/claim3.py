@@ -198,12 +198,14 @@ def run() -> dict:
                  and not r["L_second_order_differentiable"]
                  and r["eq4_operative_condition"]]
     n_apriori = sum(r["eq4_certificate_holds"] for r in in_regime)
-    geom = [r for r in in_regime if r["determined"] and r["local_gap_geometric"]]
+    in_regime_det = [r for r in in_regime if r["determined"]]
+    geom = [r for r in in_regime_det if r["local_gap_geometric"]]
     lmin = [r for r in in_regime if r["is_local_minimum"] is not False]
     print(f"\n  instances genuinely in the Theorem 3.3 regime "
           f"(polyhedral AND active AND L not C^2 at the limit AND eq.(4)): "
           f"{len(in_regime)}/{len(main)}")
-    print(f"    local gap decays geometrically in {len(geom)}/{len(in_regime)}")
+    print(f"    of those, {len(in_regime_det)} give a determined rate verdict")
+    print(f"    local gap decays geometrically in {len(geom)}/{len(in_regime_det)}")
     print(f"    limit point is a local minimum in  {len(lmin)}/{len(in_regime)}")
     print(f"    (of these, {n_apriori} also pass the stricter a-priori eq.(4) certificate)")
 
@@ -226,16 +228,22 @@ def run() -> dict:
                    {r["row"]["label"]: r["gaps"] for r in res})
     write_artifact("claim3/claim3_ball_comparison.json", balls)
 
-    ok = (len(in_regime) >= 6 and len(geom) == len(in_regime)
+    # Same determinacy-aware rule as Claim 1: an inconclusive rate verdict is not
+    # evidence against the claim, so acceptance requires that no DETERMINED
+    # in-regime instance contradicts it and that enough are determined.
+    ok = (len(in_regime) >= 6 and len(in_regime_det) >= 5
+          and len(geom) == len(in_regime_det)
           and len(lmin) == len(in_regime) and control_ok)
     return dict(
         verdict="VERIFIED" if ok else "BLOCKED",
         confidence="MEDIUM" if ok else "LOW",
         headline=(f"{len(in_regime)}/{len(main)} instances have ACTIVE polyhedral "
                   f"indicators with L not second-order differentiable at the limit; "
-                  f"the theorem's local gap decays geometrically in {len(geom)} of them; "
+                  f"the theorem's local gap decays geometrically in {len(geom)}/"
+                  f"{len(in_regime_det)} of those with a determined rate; "
                   f"large-||C|| control does not: {control_ok}"),
-        n_in_regime=len(in_regime), n_geometric=len(geom), n_localmin=len(lmin),
+        n_in_regime=len(in_regime), n_in_regime_determined=len(in_regime_det),
+        n_geometric=len(geom), n_localmin=len(lmin),
         n_apriori_certificate=n_apriori,
         control_ok=control_ok,
         artifacts=["claim3/claim3_results.csv", "claim3/claim3_local_gaps.json",

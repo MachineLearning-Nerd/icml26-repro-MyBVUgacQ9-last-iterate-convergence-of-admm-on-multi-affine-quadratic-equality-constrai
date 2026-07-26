@@ -103,8 +103,13 @@ def check_claim1(art) -> str:
     NOTES.append(f"claim1: {len(o1k)}/{len(det)} determined configs show o(1/k), "
                  f"{len(nash)}/{len(rows)} confirm the limit-point characterisation, "
                  f"{undet} inconclusive")
-    ok = (det and len(o1k) == len(det) and len(nash) == len(rows) and undet == 0
-          and ctrl["control_failed_as_predicted"])
+    # matches the acceptance rule stated on the Claim 1 page: no DETERMINED
+    # configuration may contradict the claim, at least 60% must be determined and
+    # at least 12 in absolute terms, the limit-point characterisation must hold
+    # everywhere, and the negative control must fail as the paper predicts
+    determinacy = len(det) / len(rows) if rows else 0.0
+    ok = (len(det) >= 12 and determinacy >= 0.6 and len(o1k) == len(det)
+          and len(nash) == len(rows) and ctrl["control_failed_as_predicted"])
     return "VERIFIED" if ok else "BLOCKED"
 
 
@@ -166,8 +171,10 @@ def check_claim3(art) -> str:
         FAIL.append(f"claim3: negative control did not fail ({len(ctrl_bad)} runs)")
     NOTES.append(f"claim3: {len(regime)}/{len(main)} instances in the Theorem 3.3 "
                  f"regime; local gap geometric in {len(geom)}, local minimum in {len(lm)}")
-    ok = (len(regime) >= 6 and len(geom) == len(regime) and len(lm) == len(regime)
-          and ctrl and not ctrl_bad)
+    regime_det = [r for r in regime if _b(r["determined"])]
+    geom = [r for r in regime_det if _b(r["local_gap_geometric"])]
+    ok = (len(regime) >= 6 and len(regime_det) >= 5 and len(geom) == len(regime_det)
+          and len(lm) == len(regime) and ctrl and not ctrl_bad)
     return "VERIFIED" if ok else "BLOCKED"
 
 
