@@ -338,14 +338,61 @@ def page_index(summary):
         if k in claims:
             L.append(f"| [{spec['title']}](#/{spec['slug']}) | "
                      f"{claims[k].get('verdict')} · {claims[k].get('confidence','-')} |")
-    L += ["| [Overview](#/overview) | paper and scope |",
+    L += ["| [Overview](#/overview) | paper, scope and current verdict counts |",
           "| [Claims](#/claims) | the six claim statements |",
-          "| [Conclusion](#/conclusion) | summary |",
+          "| [Conclusion](#/conclusion) | summary of the current run |",
           "| [Evidence (historical rejected baseline)](#/evidence) | preserved, "
           "superseded |",
           "| [Verification run (historical rejected baseline)](#/verification-run) | "
+          "preserved, superseded |",
+          "| [Overview (historical rejected baseline)](#/overview-historical) | "
+          "preserved, superseded |",
+          "| [Conclusion (historical rejected baseline)](#/conclusion-historical) | "
           "preserved, superseded |"]
     return "\n".join(L)
+
+
+HISTORICAL_BANNER = (
+    "> **Historical rejected baseline.** This page is the text of the previously "
+    "judged revision, preserved verbatim for the record. Its conclusions were "
+    "rejected by the judge (6/12, every claim rated TOY) and are **superseded** by "
+    "[Verification (current)](#/verification-current). Nothing on this page should "
+    "be read as a current result.")
+
+
+def page_overview(summary):
+    """Landing overview stating the scope honestly.
+
+    The judged revision's Overview asserted "All claims verified at full scale."
+    That is one of the assertions the judge rejected, so it must not survive as
+    the current landing page; its original text is preserved, labelled, at
+    `overview-historical`.
+    """
+    claims = summary["claims"]
+    n_ver = sum(1 for v in claims.values() if v.get("verdict") == "VERIFIED")
+    n_fal = sum(1 for v in claims.values() if v.get("verdict") == "FALSIFIED")
+    n_blk = sum(1 for v in claims.values() if v.get("verdict") == "BLOCKED")
+    return "\n".join([
+        "# Overview", "",
+        "# Last-iterate Convergence of ADMM on Multi-affine Quadratic Equality "
+        "Constrained Problem", "",
+        "OpenReview: https://openreview.net/forum?id=MyBVUgacQ9  ",
+        "arXiv: https://arxiv.org/abs/2603.11919", "",
+        "Clean-room CPU reproduction of six anchored claims. Every claim carries "
+        "exactly one of **VERIFIED**, **FALSIFIED** or **BLOCKED**; a claim is "
+        "marked verified only when the paper's own quantity was computed on the "
+        "paper's own problems and a negative control that *can* fail did fail.", "",
+        f"Current state: **{n_ver} VERIFIED, {n_fal} FALSIFIED, {n_blk} BLOCKED** "
+        f"across the six claims.", "",
+        "Start at [Verification (current)](#/verification-current). "
+        "[Limitations and deviations](#/limitations) states everything this "
+        "reproduction does **not** establish - including the claims that remain "
+        "BLOCKED and why.", "",
+        "> This revision supersedes a previously judged revision that reported all "
+        "six claims as passing. That revision was rejected (6/12, every claim rated "
+        "TOY); its pages are preserved at the end of the navigation and labelled "
+        "*historical rejected baseline*.",
+    ])
 
 
 def page_conclusion(summary):
@@ -419,13 +466,30 @@ def build(art, judged, out, checker_text=None, repo_root="."):
     from repro.figures import build_all
     imgs = build_all(art, os.path.join(out, "images"))
 
+    # The judged revision's Overview and Conclusion assert "All claims verified at
+    # full scale" and "6/6 claim checks PASS ... no toy/proxy results" - exactly the
+    # assertions the judge rejected as TOY.  Both are rewritten from the current
+    # results; the Overview's original text is preserved verbatim under a labelled
+    # historical slug, so nothing is deleted but no discredited assertion is left
+    # standing as a current one.  (The judged Conclusion's text is likewise
+    # preserved at conclusion-historical.)
+    hist = {}
+    for slug in ("overview", "conclusion"):
+        src = os.path.join(out, "pages", slug, "page.md")
+        if os.path.exists(src):
+            hist[f"{slug}-historical"] = (
+                f"# {slug.capitalize()} (historical rejected baseline)\n\n"
+                f"{HISTORICAL_BANNER}\n\n---\n\n{open(src).read()}")
+
     pages = {
         "index": page_index(summary),
         "verification-current": page_verification(summary, imgs, claims),
         "visibility-matrix": page_visibility(summary, art),
         "limitations": page_limitations(summary),
         "checker-output": page_checker(checker_text),
+        "overview": page_overview(summary),
         "conclusion": page_conclusion(summary),
+        **hist,
     }
     for k, spec in CLAIMS.items():
         if k in claims:
@@ -460,6 +524,12 @@ def build(art, judged, out, checker_text=None, repo_root="."):
         dict(slug="verification-run",
              title="Verification run (historical rejected baseline)",
              file="pages/verification-run/page.md", children=[]),
+        dict(slug="overview-historical",
+             title="Overview (historical rejected baseline)",
+             file="pages/overview-historical/page.md", children=[]),
+        dict(slug="conclusion-historical",
+             title="Conclusion (historical rejected baseline)",
+             file="pages/conclusion-historical/page.md", children=[]),
     ]
     lb = json.load(open(os.path.join(out, "logbook.json")))
     lb["root"]["children"] = children
