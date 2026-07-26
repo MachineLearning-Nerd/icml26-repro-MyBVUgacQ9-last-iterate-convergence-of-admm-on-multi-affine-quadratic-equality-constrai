@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import os
 
 import matplotlib
@@ -27,6 +28,20 @@ def _f(v, default=np.nan):
         return default
 
 
+
+def _short(name: str) -> str:
+    """Compact, unambiguous legend label for an instance name."""
+    m = re.match(r"locomotion(\d)D\(T=(\d+),N=(\d+),dt=([\d.]+)\)", name)
+    if m:
+        return f"locomotion {m.group(1)}D  T={m.group(2)}, N={m.group(3)}, dt={m.group(4)}"
+    m = re.match(r"random\(nx=(\d+),nc=(\d+),nz=(\d+),\|C\|=([\d.]+),seed=(\d+)\)", name)
+    if m:
+        return f"random  $n_x$={m.group(1)}, seed {m.group(5)}"
+    m = re.match(r"toy\(q=([\d.]+)", name)
+    if m:
+        return f"toy  q={m.group(1)}"
+    return name[:30]
+
 def _style(ax, xlabel, ylabel, title=None):
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -45,15 +60,17 @@ def fig_headline(art: str, out: str):
     ax = axes[0]
     shown = 0
     for key, d in raw.items():
-        if "rho_x1" not in key:
+        # exact suffix match: "rho_x1" is a prefix of "rho_x10", so a substring
+        # test silently plots the rho x10 runs too, with a label truncated to
+        # look identical to the rho x1 one
+        if key.rsplit("|", 1)[-1] != "rho_x1":
             continue
         g = np.asarray(d["gap"], float)
         g = g[np.isfinite(g) & (g > 0)]
         if g.size < 10:
             continue
         k = np.arange(1, g.size + 1)
-        lab = key.split("|")[0][:26]
-        ax.loglog(k, g, lw=1.2, alpha=0.85, label=lab)
+        ax.loglog(k, g, lw=1.2, alpha=0.85, label=_short(key.rsplit("|", 1)[0]))
         shown += 1
         if shown >= 6:
             break
@@ -75,7 +92,8 @@ def fig_headline(art: str, out: str):
         ax.semilogy(np.arange(1, g.size + 1), g, lw=1.6 if ctrl else 1.1,
                     color=PALETTE["padmm"] if ctrl else None,
                     ls="--" if ctrl else "-", alpha=0.9,
-                    label=(key[:30] if not ctrl else "control: $\\|C\\|$ outside eq.(4)"))
+                    label=("control: $\\|C\\|$ outside eq.(4)" if ctrl
+                           else key.replace("|box[0.05,0.6]", "").replace("|", "  ")[:34]))
     _style(ax, "iteration $k$",
            r"$L(x^k,z^k,w^k)-\min_{B(x^k,z^k;r)}L$",
            "Theorem 3.3: local gap under ACTIVE polyhedral indicators")
