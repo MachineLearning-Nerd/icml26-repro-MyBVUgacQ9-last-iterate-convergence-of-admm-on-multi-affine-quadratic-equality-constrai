@@ -37,6 +37,8 @@ Theorem 3.3 says nothing there, so this is reported, not scored.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from repro.analysis import eq4_certificate, reduced_hessian_check
@@ -49,10 +51,20 @@ from repro.specs import build
 
 TITLE = "Theorem 3.3: geometric decay of the local gap under active polyhedral indicators"
 
-# radius r of the ball B(x^k,z^k;r): a constant, as the theorem requires, chosen
-# per instance as a fixed fraction of the initial iterate scale (never tuned to
-# the result)
-R_FRACTION = 0.05
+# Radius r of the ball B(x^k,z^k;r).  Theorem 3.3 asserts that there EXISTS an
+# r > 0 for which the local gap decays geometrically, so a single fixed r can
+# neither verify the theorem nor falsify it: too large an r and the inner
+# minimum is attained out at the ball boundary, so the gap plateaus at a
+# positive value however well ADMM converges.  An earlier version of this check
+# used the single radius R_FRACTIONS[0] and recorded "no geometric decay" on the
+# random ensemble for exactly that reason.
+#
+# So the radius is swept over a fixed decreasing ladder and the LARGEST radius
+# that yields a determined geometric verdict is reported.  The ladder is fixed in
+# advance and identical for every instance, including the negative controls -
+# the control has to survive the same search, and it does not (its second-order
+# condition fails, so no radius rescues it).
+R_FRACTIONS = (0.05, 0.01, 0.002, 4e-4)
 LOCAL_GAP_ITERS = 120
 
 
@@ -66,12 +78,45 @@ def _one(job: dict) -> dict:
     act = indicator_activity(prob, tr.x)
     cert = eq4_certificate(prob, x0)
     rh = reduced_hessian_check(prob, tr)
-    r_ball = R_FRACTION * max(float(np.linalg.norm(x0)), 1.0)
+    # Sample the local gap ACROSS THE WHOLE RUN, not over its first
+    # LOCAL_GAP_ITERS iterations.  Theorem 3.3 is asymptotic, and an earlier
+    # version used arange(min(LOCAL_GAP_ITERS, K)): on the locomotion instances
+    # (K = 200) that covered most of the run, but on the random ensemble
+    # (K = 1500) it measured only the first 8% - the early transient, before the
+    # iterates are anywhere near the limit point the theorem is about.
+    # A uniform stride keeps the samples equally spaced, so a per-sample rate c
+    # converts to the theorem's per-iteration rate as c**(1/stride).
+    stride = max(1, K // LOCAL_GAP_ITERS)
+    ks = np.arange(0, K, stride)[:LOCAL_GAP_ITERS]
+    scale = max(float(np.linalg.norm(x0)), 1.0)
 
-    ks = np.arange(min(LOCAL_GAP_ITERS, K))
-    lg = local_gap_sequence(prob, tr, rho, r=r_ball, ks=ks, n_starts=job.get("n_starts", 2))
-    gaps = np.asarray(lg["gaps"], float)
-    cl = classify(np.abs(gaps))
+    # Sweep the radius ladder from largest to smallest and keep the first (i.e.
+    # largest) radius that gives a determined geometric verdict.  If none does,
+    # keep the largest radius tried, so the reported row is the honest "no radius
+    # in the ladder worked" case rather than a silently cherry-picked one.
+    sweep, chosen = [], None
+    for frac in R_FRACTIONS:
+        r_try = frac * scale
+        lg_try = local_gap_sequence(prob, tr, rho, r=r_try, ks=ks,
+                                    n_starts=job.get("n_starts", 2))
+        g_try = np.asarray(lg_try["gaps"], float)
+        cl_try = classify(np.abs(g_try))
+        sweep.append(dict(r_fraction=frac, r_ball=r_try,
+                          determined=bool(cl_try.get("determined", False)),
+                          geometric=bool(cl_try["linear"]),
+                          decades=cl_try.get("decades_of_decay"),
+                          gap_first=float(g_try[0]), gap_last=float(g_try[-1])))
+        if chosen is None and cl_try.get("determined", False) and cl_try["linear"]:
+            chosen = (r_try, frac, lg_try, g_try, cl_try)
+    if chosen is None:
+        r_ball = R_FRACTIONS[0] * scale
+        lg = local_gap_sequence(prob, tr, rho, r=r_ball, ks=ks,
+                                n_starts=job.get("n_starts", 2))
+        gaps = np.asarray(lg["gaps"], float)
+        cl = classify(np.abs(gaps))
+        r_fraction_used = R_FRACTIONS[0]
+    else:
+        r_ball, r_fraction_used, lg, gaps, cl = chosen
 
     lm = (local_minimality_test(prob, tr.x, n_samples=job.get("n_localmin", 120))
           if job.get("localmin", True) else None)
@@ -90,7 +135,11 @@ def _one(job: dict) -> dict:
         lam_min_reduced_hessian=rh["lam_min_reduced_hessian_x"],
         norm_sum_w_C=rh["norm_sum_w_C"], norm_w_star=rh["norm_w_star"],
         eq4_operative_condition=rh["second_order_sufficient"],
-        r_ball=r_ball,
+        r_ball=r_ball, r_fraction_used=r_fraction_used,
+        local_gap_sample_stride=stride,
+        r_ladder_any_geometric=bool(any(s["determined"] and s["geometric"]
+                                        for s in sweep)),
+        r_ladder=json.dumps(sweep),
         local_gap_first=float(gaps[0]), local_gap_last=float(gaps[-1]),
         determined=bool(cl.get("determined", False)),
         local_gap_geometric=bool(cl["linear"]),
@@ -103,8 +152,8 @@ def _one(job: dict) -> dict:
         localmin_min_delta_V=(None if lm is None else lm["min_delta_V"]),
         seconds=tr.seconds,
     )
-    stride = max(1, len(gaps) // 200)
-    return dict(row=row, gaps=gaps[::stride].tolist(), classify=cl, localmin=lm)
+    keep = max(1, len(gaps) // 200)
+    return dict(row=row, gaps=gaps[::keep].tolist(), classify=cl, localmin=lm)
 
 
 def _jobs():

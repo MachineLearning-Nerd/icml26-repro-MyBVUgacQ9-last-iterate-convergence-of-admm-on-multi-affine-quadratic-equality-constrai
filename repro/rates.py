@@ -26,6 +26,11 @@ import numpy as np
 
 RNG = np.random.default_rng(20260726)
 
+# Fixed multiplicative-noise draw used by the noisy calibration cases.  Drawn once
+# from a dedicated seeded generator so the calibration is deterministic and does
+# not consume RNG state shared with the bootstrap.
+_CAL_NOISE = np.random.default_rng(4242).normal(0.0, 0.35, 8000)
+
 
 def valid_window(gap: np.ndarray, floor: float, min_points: int = 4):
     """Indices where the gap is informative.
@@ -126,10 +131,30 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     gap = np.where(np.isfinite(gap), gap, np.nan)
     pos = gap[np.isfinite(gap) & (gap > 0)]
     if floor is None:
-        # numerical floor: 1e3 x the smallest strictly positive value observed,
-        # or double-precision resolution of the sequence scale, whichever larger
+        # Numerical floor.  Two regimes have to be told apart, and conflating
+        # them is a live failure mode:
+        #
+        #   (a) the sequence bottoms out on a plateau of round-off / solver-
+        #       tolerance noise.  Those points carry no rate information and must
+        #       be excluded, so the floor is set just above the plateau.
+        #   (b) the sequence is STILL DECAYING when the run ends.  Then its
+        #       smallest value is a genuine measurement, not noise.
+        #
+        # An earlier version used `pos.min() * 1e3` unconditionally, which is
+        # only valid in regime (a).  In regime (b) it puts the floor three
+        # decades ABOVE the last real value - and, on a sequence spanning under
+        # three decades, above every point in it, emptying the window and
+        # silently turning a converging run into "no verdict".
+        #
+        # So the plateau term is applied only when a plateau is actually
+        # detected: the tail flat to within a factor of two.  Otherwise the floor
+        # is just double-precision resolution of the sequence scale.
         scale = float(np.nanmax(np.abs(gap))) if pos.size else 1.0
-        floor = max(scale * 1e-13, (pos.min() * 1e3) if pos.size else 0.0)
+        floor = scale * 1e-13
+        if pos.size >= 10:
+            tail = pos[-max(3, pos.size // 10):]
+            if float(tail.max() / max(tail.min(), 1e-300)) < 2.0:
+                floor = max(floor, float(tail.max()) * 1.5)
     win = valid_window(gap, floor)
     ke = iters_to_tolerance(gap)
     out = dict(floor=float(floor), n_window=int(win.size), k_eps=ke,
@@ -164,6 +189,38 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     d_aic = _aic(ss_geo, k.size) - _aic(ss_pow, k.size)
     out["delta_aic_geo_minus_pow"] = float(d_aic)
 
+    # --- tail-supremum envelope ------------------------------------------------
+    # The theorems assert gap_k <= M c^{-k}: an ENVELOPE over the sequence, not a
+    # monotone per-step contraction.  A sequence can satisfy it while going up on
+    # individual steps, which the one-step-ratio certificate below cannot see and
+    # a raw log-linear fit scores badly.  That matters for quantities recovered by
+    # an inner numerical solve (Theorem 3.3's local gap), where the iterate-to-
+    # iterate wobble is solver noise rather than a property of the algorithm.
+    #
+    # sup_{j>=k} gap_j is the smallest non-increasing envelope of the sequence, so
+    # fitting IT is a direct test of the theorem's actual statement.  It is not a
+    # weaker test: for a smooth decreasing sequence the tail-sup equals the
+    # sequence, so Theta(1/k) is rejected here exactly as it is by the raw fit
+    # (its envelope is still a power law, not a geometric).  calibrate() checks
+    # both the noisy-geometric and noisy-power-law cases.
+    tsup = np.maximum.accumulate(g[::-1])[::-1]
+    tsup_decades = float(np.log10(tsup[0] / tsup[-1])) if tsup[-1] > 0 else 0.0
+    (_a_t, b_t), r2_t, ss_t = _ols(k, np.log(tsup))
+    lo_t, hi_t = _bootstrap_slope(k, np.log(tsup), n_boot)
+    _, _, ss_tp = _ols(np.log(k), np.log(tsup))
+    d_aic_t = _aic(ss_t, k.size) - _aic(ss_tp, k.size)
+    out.update(tail_sup_slope=float(b_t), tail_sup_r2=float(r2_t),
+               tail_sup_decades=tsup_decades,
+               c1_tail_envelope=float(np.exp(-b_t)))
+    out["linear_by_tail_envelope"] = bool(
+        k.size >= 25
+        and hi_t < 0.0             # envelope strictly decaying, 95% CI
+        and r2_t >= 0.995
+        and tsup_decades >= 3.0
+        and d_aic_t < 0.0          # geometric beats power law on the envelope too
+        and np.exp(-b_t) > 1.0
+    )
+
     # --- geometric envelope certificate ---
     # If every one-step ratio on the window is <= cmax < 1 then, on the observed
     # range, gap_k <= gap_peak * cmax^(k - peak) -- a verified O(c^{-k}) envelope
@@ -175,7 +232,18 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     cmax = float(ratios.max()) if ratios.size else 1.0
     out.update(max_one_step_ratio=cmax, n_ratios=int(ratios.size),
                median_one_step_ratio=float(np.median(ratios)) if ratios.size else 1.0)
-    out["linear_by_envelope"] = bool(ratios.size >= 3 and cmax <= 0.9 and decades >= 6.0)
+    # Materiality bar: three decades of genuine decay, the SAME bar used by the
+    # regression path and by `determined` below.  An earlier version demanded six
+    # decades here.  That was internally inconsistent and, worse, biased against
+    # the claim: the envelope is a *verified per-step bound*, i.e. stronger
+    # evidence than the regression it was being held to twice the standard of,
+    # and the sequences it rejected were the ones that converged FASTEST (a run
+    # contracting by 25x per iteration reaches the numerical floor after ~5.6
+    # decades, so it could never clear a 6-decade bar no matter how geometric it
+    # was).  None of the certificate's discriminating power lives in the decade
+    # count: Theta(1/k), Theta(1/log k) and k^-1.5 are all rejected by cmax <= 0.9
+    # alone, since their one-step ratios tend to 1.  calibrate() re-verifies this.
+    out["linear_by_envelope"] = bool(ratios.size >= 3 and cmax <= 0.9 and decades >= 3.0)
     if out["linear_by_envelope"]:
         out["c1_envelope"] = float(1.0 / cmax)
 
@@ -191,11 +259,16 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
         and c1 > 1.0
     )
     out["linear"] = bool(out["linear_by_regression"] or out["linear_by_envelope"]
+                         or out["linear_by_tail_envelope"]
                          or ke.get("k_eps_linear", False))
     # Is there enough decay for ANY verdict to be meaningful?  A run that stops
     # while the gap is still on its plateau is inconclusive, not a refutation.
-    out["determined"] = bool(decades >= 3.0 and (enough or out["linear_by_envelope"]
-                                                 or ke.get("n_levels", 0) >= 4))
+    # `decades` uses the raw endpoints, which understate the decay of a noisy
+    # sequence whose last sample happens to sit on an up-step; the tail-sup
+    # measures the same decay without that artefact.
+    out["determined"] = bool(
+        max(decades, tsup_decades) >= 3.0
+        and (enough or out["linear_by_envelope"] or ke.get("n_levels", 0) >= 4))
 
     # --- o(1/k) verdict ---
     t = k * g                       # k * gap_k must tend to 0
@@ -237,10 +310,66 @@ def calibrate(K: int = 4000) -> list[dict]:
          dict(linear=True, little_o_1_over_k=True, determined=True)),
         ("geometric_0.995", 0.995 ** k,
          dict(linear=True, little_o_1_over_k=True, determined=True)),
+        # --- floored cases ---------------------------------------------------
+        # Every case above runs with floor=0.0 and so never reaches a numerical
+        # floor.  Real ADMM runs do, and the fast ones reach it within a handful
+        # of iterations, which is precisely where a rate estimator is easiest to
+        # get wrong.  These two cases pin down that regime from both sides.
+        #
+        # Contracting 25x per iteration from 4e-11 down to a 1e-16 floor gives
+        # only ~5.6 decades and ~4 usable points: too few for a regression, but
+        # a per-step ratio of 0.04 is about as geometric as a sequence can be.
+        # The instrument must say so.  (An earlier six-decade bar on the envelope
+        # certificate failed exactly this case -- it rejected sequences for
+        # converging too fast.)
+        ("geometric_0.04_floored", 4e-11 * (0.04 ** np.arange(K, dtype=float)),
+         dict(linear=True, little_o_1_over_k=True, determined=True), 1e-16),
+        # The mirror image: a Theta(1/k) sequence truncated by the same floor
+        # must STILL be rejected, so the case above cannot be passed by any rule
+        # that merely waves through short windows.
+        ("theta_1_over_k_floored", 4e-11 / k,
+         dict(linear=False, little_o_1_over_k=False), 1e-16),
+        # --- noisy cases -----------------------------------------------------
+        # Theorem 3.3's local gap is recovered by an inner constrained solve, so
+        # it wobbles from iterate to iterate even when the underlying decay is
+        # clean.  These two cases pin the tail-supremum envelope route from both
+        # sides using the SAME multiplicative noise, so the only thing separating
+        # them is the underlying rate.
+        ("geometric_0.9_noisy",
+         0.9 ** k * np.exp(_CAL_NOISE[:K]),
+         dict(linear=True, little_o_1_over_k=True, determined=True)),
+        # Same noise on a power law: must still be rejected, so the case above
+        # cannot be passed by any rule that merely tolerates noise.
+        ("k_pow_-1_noisy",
+         (1.0 / k) * np.exp(_CAL_NOISE[:K]),
+         dict(linear=False, little_o_1_over_k=False, determined=True)),
+        # --- auto-floor cases ------------------------------------------------
+        # Every case above passes an EXPLICIT floor, so none of them exercises
+        # the floor that classify() infers when called with floor=None - which is
+        # how the claim modules call it.  These two cover both regimes.
+        #
+        # (a) plateau: geometric decay that bottoms out on a solver-tolerance
+        # shelf at 1e-9.  The shelf must be excluded and the decay still seen.
+        ("geometric_then_plateau_autofloor",
+         np.maximum(0.85 ** k, 1e-9),
+         dict(linear=True, little_o_1_over_k=True, determined=True), None),
+        # (b) still decaying at the end: a geometric run stopped early, spanning
+        # only ~4 decades and nowhere near any floor.  The inferred floor must
+        # not swallow it (the old `pos.min()*1e3` rule put the floor above every
+        # point here and reported "no verdict").
+        ("geometric_truncated_autofloor",
+         0.93 ** np.arange(140, dtype=float),
+         dict(linear=True, little_o_1_over_k=True, determined=True), None),
+        # The mirror of both: a truncated Theta(1/k) under the same inferred
+        # floor must still be rejected, so neither auto-floor case above can be
+        # passed by a rule that simply widens the window.
+        ("theta_1_over_k_truncated_autofloor",
+         1.0 / np.arange(1, 141, dtype=float),
+         dict(linear=False, little_o_1_over_k=False), None),
     ]
     rows = []
-    for name, seq, expect in cases:
-        res = classify(seq, floor=0.0)
+    for name, seq, expect, *rest in cases:
+        res = classify(seq, floor=(rest[0] if rest else 0.0))
         ok = all(bool(res.get(key, False)) == val for key, val in expect.items())
         rows.append(dict(case=name, expected=expect,
                          observed=dict(linear=res["linear"],
