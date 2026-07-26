@@ -76,6 +76,39 @@ def friction_pyramid(mu: float, fmax: float, dim: int, normal: int = None) -> Po
     return Polyhedron(np.array(rows), np.array(rhs), label=f"friction_pyramid(mu={mu:g})")
 
 
+def contact_schedule(gait, T: int, N: int):
+    """Boolean (T, N) contact schedule for the named gaits of Figure 6.
+
+    `jump`  : humanoid vertical jump -- stance, flight (no contact), landing.
+    `bound` : quadruped bounding -- front pair and hind pair alternate, with a
+              short flight phase between them.
+    """
+    if gait is None:
+        return None
+    sched = np.ones((T, N), dtype=bool)
+    if gait == "jump":
+        launch, land = int(0.35 * T), int(0.65 * T)
+        sched[launch:land, :] = False                      # flight phase
+    elif gait == "bound":
+        half = max(N // 2, 1)
+        period = 6
+        for i in range(T):
+            ph = i % period
+            if ph < 2:
+                sched[i, half:] = False                    # front pair only
+            elif ph < 3:
+                sched[i, :] = False                        # flight
+            elif ph < 5:
+                sched[i, :half] = False                    # hind pair only
+            else:
+                sched[i, :] = False                        # flight
+    elif gait == "stance":
+        pass
+    else:
+        raise ValueError(f"unknown gait {gait!r}")
+    return sched
+
+
 def build_locomotion(
     T: int = 20,
     N: int = 2,
@@ -87,12 +120,13 @@ def build_locomotion(
     cdot_init=None,
     k_init=None,
     mu_fric: float = 0.7,
-    fmax: float = 200.0,
+    fmax: float = None,
     phi_weight: float = 5.0,
     contacts: str = "alternating",
     seed: int = 0,
     with_indicators: bool = True,
     support_band=(0.8, 1.4),
+    gait=None,
 ) -> MAQEP:
     """Assemble eq. (6) as an MAQEP instance.
 
@@ -100,6 +134,10 @@ def build_locomotion(
     D = 3 for dim=3 and D = 1 for dim=2 (scalar angular momentum).
     """
     rng = np.random.default_rng(seed)
+    # per-contact normal-force ceiling: generous relative to body weight, so the
+    # block sets are never empty when the support band has to be met
+    if fmax is None:
+        fmax = 3.0 * m * g_acc
     eps = _levi_civita(dim)
     D = eps.shape[0]                      # angular-momentum dimension
     nf = dim * N                          # variables per force block
@@ -203,7 +241,29 @@ def build_locomotion(
             h = np.concatenate([h, [-lo * m * g_acc, hi * m * g_acc]])
         lab = (f"friction_pyramid(mu={mu_fric:g})xN{N}"
                + (f"+support[{support_band[0]:g},{support_band[1]:g}]mg" if support_band else ""))
-        sets = [Polyhedron(G, h, label=lab) for _ in range(T)]
+        sched = contact_schedule(gait, T, N)
+        sets = []
+        for i in range(T):
+            if sched is not None and not sched[i].any():
+                # flight phase: no contact, so every force is exactly zero.
+                # {0} is a polyhedron, so Assumption 2.3 still holds.
+                Gz = np.vstack([np.eye(nf), -np.eye(nf)])
+                sets.append(Polyhedron(Gz, np.zeros(2 * nf), label="flight(f=0)"))
+            elif sched is not None and not sched[i].all():
+                Gi, hi_ = G.copy(), h.copy()
+                extra_G, extra_h = [], []
+                for j in range(N):
+                    if not sched[i, j]:          # this foot is off the ground
+                        for a in range(dim):
+                            row = np.zeros(nf); row[j * dim + a] = 1.0
+                            extra_G.append(row.copy()); extra_h.append(0.0)
+                            extra_G.append(-row); extra_h.append(0.0)
+                # a swinging foot cannot contribute to support
+                Gi = np.vstack([Gi, np.array(extra_G)])
+                hi_ = np.concatenate([hi_, np.array(extra_h)])
+                sets.append(Polyhedron(Gi, hi_, label=lab + "|partial-contact"))
+            else:
+                sets.append(Polyhedron(G, h, label=lab))
     else:
         from repro.core import FreeSet
         sets = [FreeSet(nf) for _ in range(T)]
@@ -214,7 +274,8 @@ def build_locomotion(
     prob.meta = dict(T=T, N=N, dim=dim, D=D, dt=dt, m=m, g=g_acc, mu_fric=mu_fric,
                      fmax=fmax, contacts=contacts, r=r, c_init=c_init,
                      cdot_init=cdot_init, k_init=k_init, with_indicators=with_indicators,
-                     support_band=support_band)
+                     support_band=support_band, gait=gait,
+                     contact_schedule=contact_schedule(gait, T, N))
     return prob
 
 
@@ -226,17 +287,18 @@ def feasible_start(prob: MAQEP, rng=None, scale: float = 1.0) -> np.ndarray:
     """
     md = prob.meta
     dim, N, T, m, g = md["dim"], md["N"], md["T"], md["m"], md["g"]
+    sched = md.get("contact_schedule")
     x0 = np.zeros(prob.n_x)
     nf = dim * N
-    fn = m * g / N * scale
     for i in range(T):
-        for j in range(N):
+        stance = [j for j in range(N) if sched is None or sched[i, j]]
+        if not stance:
+            continue                       # flight phase: forces are exactly zero
+        fn = m * g / len(stance) * scale
+        for j in stance:
             base = i * nf + j * dim
             x0[base + dim - 1] = fn
-    if rng is not None:
-        x0 = x0 + rng.normal(0.0, 0.02 * fn, size=x0.shape)
-        for i in range(T):  # keep normals positive
-            for j in range(N):
-                base = i * nf + j * dim
-                x0[base + dim - 1] = abs(x0[base + dim - 1])
+            if rng is not None:
+                x0[base:base + dim - 1] += rng.normal(0.0, 0.05 * fn, size=dim - 1)
+                x0[base + dim - 1] = abs(fn + rng.normal(0.0, 0.02 * fn))
     return x0
