@@ -55,6 +55,8 @@ def _q_one(job: dict) -> dict:
                 mu_z=job["spec"].get("mu_z", 1.0), x0=list(job["spec"]["x0"]),
                 rho=rho, rho_multiplier=job.get("rho_multiplier", 1.0),
                 determined=bool(cl.get("determined", False)),
+                geometric_determined=bool(cl.get("geometric_determined", False)),
+                established_not_geometric=bool(cl.get("established_not_geometric", False)),
                 linear=bool(cl["linear"]),
                 decades_of_decay=cl.get("decades_of_decay"),
                 max_one_step_ratio=cl.get("max_one_step_ratio"),
@@ -138,8 +140,15 @@ def run() -> dict:
     qjobs = _q_jobs()
     print(f"  (5a) {len(qjobs)} q-sweep configurations on {workers()} workers", flush=True)
     qrows = pmap(_q_one, qjobs, desc="claim5-q")
-    above = [r for r in qrows if r["q"] >= 10.0 and r["determined"]]
+    # A q >= 10 configuration refutes the paper's sufficiency claim only if it is
+    # POSITIVELY established non-geometric; "no route certified it" is
+    # inconclusive.  Two earlier "COUNTEREXAMPLES" here were nothing of the kind:
+    # per-step ratios 0.815 and 0.327, i.e. plainly geometric, rejected only by a
+    # six-decade bar they could not reach before hitting the numerical floor.
+    above = [r for r in qrows if r["q"] >= 10.0 and r["geometric_determined"]]
     above_lin = [r for r in above if r["linear"]]
+    above_refuted = [r for r in qrows
+                     if r["q"] >= 10.0 and r["established_not_geometric"]]
     above_undet = [r for r in qrows if r["q"] >= 10.0 and not r["determined"]]
     print(f"\n  q >= 10: {len(above_lin)}/{len(above)} determined configurations "
           f"converge geometrically ({len(above_undet)} inconclusive)")
@@ -161,7 +170,9 @@ def run() -> dict:
           f"(all below the paper's sufficient q >= 10: "
           f"{all(v <= 10.0 for v in onset_vals)})")
 
-    sufficiency_holds = bool(len(above) > 0 and len(above_lin) == len(above))
+    print(f"  q >= 10 configurations POSITIVELY ESTABLISHED non-geometric: "
+          f"{len(above_refuted)}")
+    sufficiency_holds = bool(len(above_lin) >= 12 and not above_refuted)
 
     # ---------------- 5b: the Figure 4 baseline comparison ----------------
     bjobs = _baseline_jobs()

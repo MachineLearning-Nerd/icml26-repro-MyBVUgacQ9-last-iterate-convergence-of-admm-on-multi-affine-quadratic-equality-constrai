@@ -87,7 +87,8 @@ def check_claim1(art) -> str:
     if not rows or ctrl is None:
         return "BLOCKED"
     det = [r for r in rows if _b(r["determined"])]
-    o1k = [r for r in det if _b(r["little_o_1_over_k"])]
+    o1k = [r for r in rows if _b(r["little_o_1_over_k"])]
+    refuted = [r for r in rows if _b(r.get("established_not_little_o", "False"))]
     nash = [r for r in rows if _b(r["limit_point_characterised"])]
     undet = len(rows) - len(det)
     if not _b(str(ctrl["control_failed_as_predicted"])):
@@ -107,8 +108,11 @@ def check_claim1(art) -> str:
     # configuration may contradict the claim, at least 60% must be determined and
     # at least 12 in absolute terms, the limit-point characterisation must hold
     # everywhere, and the negative control must fail as the paper predicts
+    if refuted:
+        FAIL.append(f"claim1: {len(refuted)} configuration(s) positively establish "
+                    "that o(1/k) FAILS")
     determinacy = len(det) / len(rows) if rows else 0.0
-    ok = (len(det) >= 12 and determinacy >= 0.6 and len(o1k) == len(det)
+    ok = (len(o1k) >= 12 and determinacy >= 0.6 and not refuted
           and len(nash) == len(rows) and ctrl["control_failed_as_predicted"])
     return "VERIFIED" if ok else "BLOCKED"
 
@@ -187,9 +191,15 @@ def check_claim3(art) -> str:
                         f"(lengths {sorted(n_radii)}) -- not a fixed, pre-declared search")
     NOTES.append(f"claim3: {len(regime)}/{len(main)} instances in the Theorem 3.3 "
                  f"regime; local gap geometric in {len(geom)}, local minimum in {len(lm)}")
-    regime_det = [r for r in regime if _b(r["determined"])]
-    geom = [r for r in regime_det if _b(r["local_gap_geometric"])]
-    ok = (len(regime) >= 6 and len(regime_det) >= 5 and len(geom) == len(regime_det)
+    # Same per-question rule the claim module uses, re-derived here: a config
+    # counts against Theorem 3.3 only when non-geometry is POSITIVELY established,
+    # not merely uncertified.
+    geom = [r for r in regime if _b(r["local_gap_geometric"])]
+    refuted = [r for r in regime if _b(r.get("established_not_geometric", "False"))]
+    if refuted:
+        FAIL.append(f"claim3: {len(refuted)} in-regime configuration(s) positively "
+                    "established NON-geometric")
+    ok = (len(regime) >= 6 and len(geom) >= 5 and not refuted
           and len(lm) == len(regime) and ctrl and not ctrl_bad)
     return "VERIFIED" if ok else "BLOCKED"
 

@@ -102,6 +102,8 @@ def _one(job: dict) -> dict:
         label=job["label"], dt=job["spec"]["dt"], instance=prob.name,
         n_x=a["n_x"], n_c=a["n_c"], norm_C=a["norm_C"], norm_d=a["norm_d"], rho=rho,
         determined=bool(cl.get("determined", False)),
+        geometric_determined=bool(cl.get("geometric_determined", False)),
+        established_not_geometric=bool(cl.get("established_not_geometric", False)),
         linear=bool(cl["linear"]),
         c3_estimate=cl.get("c1_envelope", cl.get("c1_estimate")),
         decades_of_decay=cl.get("decades_of_decay"),

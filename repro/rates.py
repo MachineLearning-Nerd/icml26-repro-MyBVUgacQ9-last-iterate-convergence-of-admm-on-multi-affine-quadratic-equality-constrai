@@ -151,10 +151,42 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
         # is just double-precision resolution of the sequence scale.
         scale = float(np.nanmax(np.abs(gap))) if pos.size else 1.0
         floor = scale * 1e-13
-        if pos.size >= 10:
-            tail = pos[-max(3, pos.size // 10):]
-            if float(tail.max() / max(tail.min(), 1e-300)) < 2.0:
-                floor = max(floor, float(tail.max()) * 1.5)
+        if pos.size >= 12:
+            # A plateau is a suffix that has STOPPED DECAYING: under half a decade
+            # of spread from there to the end.  Testing "stopped decaying" rather
+            # than "is flat to within 2x" is what separates a round-off shelf from
+            # a sequence still on its way down.
+            #
+            # Take the LONGEST such suffix, not a fixed-size tail.  A shelf is
+            # never flat and often drifts downward in steps (2.3e-13 early,
+            # 1.1e-13 late), so a floor derived from the last few samples sits
+            # BELOW the shelf's own upper step and leaves those points in the
+            # window -- which is what flattened R^2 to 0.64 and pinned the
+            # one-step ratio at 1.0 on runs that had contracted 25x per iteration
+            # for eight straight iterations before flooring.
+            #
+            # The suffix must also be long (>= a quarter of the sequence) for a
+            # plateau to be declared, so that a slowly decaying sequence -- whose
+            # every SHORT suffix looks flat -- is never truncated.
+            smax = np.maximum.accumulate(pos[::-1])[::-1]
+            smin = np.minimum.accumulate(pos[::-1])[::-1]
+            spread = np.log10(smax / np.maximum(smin, 1e-300))
+            need = max(8, pos.size // 4)
+            cand = np.flatnonzero((spread < 0.5) & (pos.size - np.arange(pos.size) >= need))
+            if cand.size:
+                floor = max(floor, float(smax[cand[0]]) * 1.5)
+        # An EXACT zero is unambiguous: the computed gap has reached machine
+        # precision.  Every strictly positive reading at or after the first zero
+        # is therefore round-off, whatever its magnitude, and belongs below the
+        # floor.  This catches the very fast runs, where the whole post-collapse
+        # shelf is too short to qualify as a plateau above (a run that contracts
+        # 25x per iteration produces only a handful of points either side).
+        zi = np.flatnonzero(np.isfinite(gap) & (gap == 0.0))
+        if zi.size:
+            after = gap[zi[0]:]
+            ap = after[np.isfinite(after) & (after > 0)]
+            if ap.size:
+                floor = max(floor, float(ap.max()) * 1.5)
     win = valid_window(gap, floor)
     ke = iters_to_tolerance(gap)
     out = dict(floor=float(floor), n_window=int(win.size), k_eps=ke,
@@ -162,9 +194,16 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     if win.size == 0:
         # too few points above the floor for a regression: fall back on the
         # resolution-independent iterations-to-tolerance estimator alone
-        out.update(linear=bool(ke.get("k_eps_linear", False)),
-                   little_o_1_over_k=bool(ke.get("k_eps_linear", False)),
-                   determined=bool(ke.get("k_eps_linear", False)),
+        lin = bool(ke.get("k_eps_linear", False))
+        out.update(linear=lin, little_o_1_over_k=lin, determined=lin,
+                   # An empty window means the estimator saw nothing to measure,
+                   # so nothing is established either way -- least of all that
+                   # the sequence is NOT geometric.
+                   established_not_geometric=False,
+                   geometric_determined=lin,
+                   little_o_by_direct_decay=False,
+                   established_not_little_o=False,
+                   little_o_determined=lin,
                    reason="regression window empty; k(eps) estimator used")
         return out
 
@@ -261,6 +300,21 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     out["linear"] = bool(out["linear_by_regression"] or out["linear_by_envelope"]
                          or out["linear_by_tail_envelope"]
                          or ke.get("k_eps_linear", False))
+
+    # Per-question determinacy.  `linear = False` must NOT be read as "this
+    # sequence is not geometric": it means no route certified that it is, which
+    # covers both a genuine power law and a sequence the estimator simply cannot
+    # resolve (a handful of window points, a wobbly inner solve, R^2 = 0.41).
+    # Treating the second as a counterexample to a theorem is the same category
+    # error as reporting "could not establish alpha > 1" as "not o(1/k)".
+    #
+    # So non-geometry has to be POSITIVELY established: three decades of real
+    # decay that a power law fits well AND fits BETTER than a geometric.  That is
+    # what Theta(1/k) and k^-1.5 do, so the negative controls still land here.
+    out["established_not_geometric"] = bool(
+        (not out["linear"]) and decades >= 3.0
+        and r2_pow >= 0.995 and d_aic > 0.0)
+    out["geometric_determined"] = bool(out["linear"] or out["established_not_geometric"])
     # Is there enough decay for ANY verdict to be meaningful?  A run that stops
     # while the gap is still on its plateau is inconclusive, not a refutation.
     # `decades` uses the raw endpoints, which understate the decay of a noisy
@@ -275,13 +329,40 @@ def classify(gap: np.ndarray, floor: float | None = None, n_boot: int = 400) -> 
     tail_max = np.maximum.accumulate(t[::-1])[::-1]  # sup_{j>=k} j*gap_j
     tail_decreasing = bool(tail_max[-1] <= tail_max[0] * (1 - 1e-9))
     ratio_end_start = float(t[-1] / t[0]) if t[0] > 0 else np.inf
+    # Direct test of the DEFINITION.  o(1/k) means k*gap_k -> 0, so the honest
+    # measurement is how far sup_{j>=k} j*gap_j actually falls -- no power-law
+    # model, no fitted exponent.  The exponent route below is a proxy for this,
+    # and it can be inconclusive (a wide bootstrap CI on alpha) on a sequence
+    # whose k*gap_k has collapsed by nine orders of magnitude.  Reporting that
+    # as "not o(1/k)" would confuse "my estimator could not decide" with
+    # "the claim fails here", so the definitional route is tested directly.
+    #
+    # This cannot wave through the sequences that matter: for Theta(1/k),
+    # k*gap_k is CONSTANT (exactly 1), so it falls zero decades and is rejected;
+    # for Theta(1/log k) it grows.  calibrate() re-checks both.
+    t_tail_decades = (float(np.log10(tail_max[0] / tail_max[-1]))
+                      if tail_max[-1] > 0 else np.inf)
     out.update(t_start=float(t[0]), t_end=float(t[-1]),
                t_ratio_end_over_start=ratio_end_start,
-               tail_sup_decreasing=tail_decreasing)
+               tail_sup_decreasing=tail_decreasing,
+               k_gap_tail_decades=t_tail_decades)
+    out["little_o_by_direct_decay"] = bool(t_tail_decades >= 3.0)
     out["little_o_1_over_k"] = bool(
         out["linear"]                      # geometric decay implies o(1/k)
+        or out["little_o_by_direct_decay"]
         or (enough and -hi_p > 1.0 and tail_decreasing and ratio_end_start < 1.0)
     )
+    # The o(1/k) counterpart of `established_not_geometric`, and again stated in
+    # terms of the definition rather than a fitted exponent: o(1/k) FAILS exactly
+    # when k*gap_k does not tend to 0, so the positive evidence is that
+    # sup_{j>=k} j*gap_j is still essentially flat over a long window.  This is
+    # what Theta(1/k) does (k*gap_k is identically 1, so it falls zero decades),
+    # which an exponent-based rule would miss: alpha = 1 exactly, so any CI on
+    # alpha straddles 1 and nothing is ever "established".
+    out["established_not_little_o"] = bool(
+        (not out["little_o_1_over_k"]) and enough and t_tail_decades < 0.1)
+    out["little_o_determined"] = bool(out["little_o_1_over_k"]
+                                      or out["established_not_little_o"])
     return out
 
 

@@ -142,6 +142,8 @@ def _one(job: dict) -> dict:
         r_ladder=json.dumps(sweep),
         local_gap_first=float(gaps[0]), local_gap_last=float(gaps[-1]),
         determined=bool(cl.get("determined", False)),
+        geometric_determined=bool(cl.get("geometric_determined", False)),
+        established_not_geometric=bool(cl.get("established_not_geometric", False)),
         local_gap_geometric=bool(cl["linear"]),
         c2_estimate=cl.get("c1_envelope", cl.get("c1_estimate")),
         max_one_step_ratio=cl.get("max_one_step_ratio"),
@@ -247,8 +249,10 @@ def run() -> dict:
                  and not r["L_second_order_differentiable"]
                  and r["eq4_operative_condition"]]
     n_apriori = sum(r["eq4_certificate_holds"] for r in in_regime)
-    in_regime_det = [r for r in in_regime if r["determined"]]
+    in_regime_det = [r for r in in_regime if r["geometric_determined"]]
     geom = [r for r in in_regime_det if r["local_gap_geometric"]]
+    # positively established counterexamples, as opposed to "could not certify"
+    refuted = [r for r in in_regime if r["established_not_geometric"]]
     lmin = [r for r in in_regime if r["is_local_minimum"] is not False]
     print(f"\n  instances genuinely in the Theorem 3.3 regime "
           f"(polyhedral AND active AND L not C^2 at the limit AND eq.(4)): "
@@ -280,8 +284,9 @@ def run() -> dict:
     # Same determinacy-aware rule as Claim 1: an inconclusive rate verdict is not
     # evidence against the claim, so acceptance requires that no DETERMINED
     # in-regime instance contradicts it and that enough are determined.
-    ok = (len(in_regime) >= 6 and len(in_regime_det) >= 5
-          and len(geom) == len(in_regime_det)
+    print(f"    local gap POSITIVELY ESTABLISHED non-geometric in {len(refuted)}"
+          f"/{len(in_regime)}")
+    ok = (len(in_regime) >= 6 and len(geom) >= 5 and not refuted
           and len(lmin) == len(in_regime) and control_ok)
     return dict(
         verdict="VERIFIED" if ok else "BLOCKED",
