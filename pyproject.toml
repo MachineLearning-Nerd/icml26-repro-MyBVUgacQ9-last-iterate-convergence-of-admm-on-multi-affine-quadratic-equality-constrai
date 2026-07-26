@@ -1,0 +1,18 @@
+[project]
+name = "repro-mybvugacq9"
+version = "0.1.0"
+description = "Claim-by-claim reproduction of arXiv:2603.11919 (Last-iterate Convergence of ADMM on Multi-affine Quadratic Equality Constrained Problem)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy==2.2.6",
+    "scipy==1.15.3",
+    "clarabel==0.10.0",
+    "matplotlib==3.10.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["repro"]
