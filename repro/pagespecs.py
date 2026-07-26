@@ -53,7 +53,8 @@ CLAIMS = {
             "failure; if the pipeline reported success here it would be measuring "
             "nothing."),
         raw=["raw/claim1/claim1_results.csv", "raw/claim1/claim1_raw.json",
-             "raw/claim1/claim1_negative_control.json"],
+             "raw/claim1/claim1_negative_control.json",
+             "raw/claim1/claim1_persistence.json"],
         code=["repro/claims/claim1.py", "repro/core.py", "repro/rates.py",
               "repro/analysis.py"],
         table_cols=["instance", "n_x", "n_c", "rho", "rho_multiplier",
