@@ -22,6 +22,7 @@ import importlib
 import json
 import sys
 import time
+import traceback
 
 import numpy as np
 
@@ -117,8 +118,20 @@ def main() -> int:
             )
             continue
         banner(f"{name.upper()}  --  {getattr(mod, 'TITLE', '')}")
-        res = mod.run()
-        assert res["verdict"] in VALID_VERDICTS, f"{name}: bad verdict {res['verdict']}"
+        try:
+            res = mod.run()
+            assert res["verdict"] in VALID_VERDICTS, f"{name}: bad verdict {res['verdict']}"
+        except Exception:
+            # One claim crashing must not destroy the other five claims' evidence
+            # or the artifact bundle.  The failure is recorded as BLOCKED with
+            # internal_failure set, which still makes the run exit non-zero.
+            tb = traceback.format_exc()
+            print(tb, flush=True)
+            res = dict(verdict="BLOCKED", confidence="LOW", internal_failure=True,
+                       reason=f"claim check raised: {tb.strip().splitlines()[-1]}",
+                       headline="internal failure - see traceback in the log",
+                       traceback=tb)
+            write_artifact(f"{name}/{name}_internal_failure.txt", tb)
         results[name] = res
 
     banner("VERDICT SUMMARY")
