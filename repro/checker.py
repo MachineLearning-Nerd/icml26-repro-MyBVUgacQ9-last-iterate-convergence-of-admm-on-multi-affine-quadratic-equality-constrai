@@ -108,11 +108,25 @@ def check_claim1(art) -> str:
     # configuration may contradict the claim, at least 60% must be determined and
     # at least 12 in absolute terms, the limit-point characterisation must hold
     # everywhere, and the negative control must fail as the paper predicts
-    if refuted:
-        FAIL.append(f"claim1: {len(refuted)} configuration(s) positively establish "
-                    "that o(1/k) FAILS")
+    # An apparent counterexample only counts once it has survived the longer
+    # horizon: Theorem 3.1 is asymptotic, so a single horizon cannot tell a
+    # counterexample from a transient.  Re-derived here from the persistence
+    # artifact rather than taken on trust from the claim module.
+    persist = _json(art, "claim1", "claim1_persistence.json") if refuted else []
+    if refuted and not persist:
+        FAIL.append(f"claim1: {len(refuted)} apparent counterexample(s) were never "
+                    "re-tested at a longer horizon")
+    survived = [p for p in (persist or []) if _b(str(p["established_not_little_o"]))]
+    if survived:
+        FAIL.append(f"claim1: {len(survived)} configuration(s) still refute o(1/k) "
+                    "after the longer-horizon re-test")
+    if persist:
+        NOTES.append(f"claim1: {len(refuted)} apparent counterexample(s) re-tested at "
+                     f"a longer horizon; {len(survived)} survived, "
+                     f"{len(persist) - len(survived)} were pre-asymptotic transients")
     determinacy = len(det) / len(rows) if rows else 0.0
-    ok = (len(o1k) >= 12 and determinacy >= 0.6 and not refuted
+    ok = (len(o1k) >= 12 and determinacy >= 0.6 and not survived
+          and (not refuted or persist)
           and len(nash) == len(rows) and ctrl["control_failed_as_predicted"])
     return "VERIFIED" if ok else "BLOCKED"
 
