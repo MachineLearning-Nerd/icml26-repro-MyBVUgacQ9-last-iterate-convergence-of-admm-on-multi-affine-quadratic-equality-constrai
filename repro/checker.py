@@ -169,6 +169,22 @@ def check_claim3(art) -> str:
     ctrl_bad = [r for r in ctrl if _b(r["determined"]) and _b(r["local_gap_geometric"])]
     if ctrl and ctrl_bad:
         FAIL.append(f"claim3: negative control did not fail ({len(ctrl_bad)} runs)")
+    # Theorem 3.3's radius is existentially quantified, so claim3 searches a
+    # ladder of radii.  A search that only the supported instances are subjected
+    # to would be a cherry-pick, so verify from the raw rows that the controls
+    # went through the identical ladder and that NO radius in it rescued them.
+    if ctrl and "r_ladder_any_geometric" in ctrl[0]:
+        rescued = [r for r in ctrl if _b(r["r_ladder_any_geometric"])]
+        if rescued:
+            FAIL.append(f"claim3: {len(rescued)} negative control(s) became geometric "
+                        "at some radius in the ladder -- the radius search is not "
+                        "discriminating")
+        ladders = {r.get("r_ladder", "") for r in ctrl} | {r.get("r_ladder", "")
+                                                           for r in regime}
+        n_radii = {len(json.loads(x)) for x in ladders if x}
+        if len(n_radii) > 1:
+            FAIL.append(f"claim3: radius ladder differs between configurations "
+                        f"(lengths {sorted(n_radii)}) -- not a fixed, pre-declared search")
     NOTES.append(f"claim3: {len(regime)}/{len(main)} instances in the Theorem 3.3 "
                  f"regime; local gap geometric in {len(geom)}, local minimum in {len(lm)}")
     regime_det = [r for r in regime if _b(r["determined"])]
