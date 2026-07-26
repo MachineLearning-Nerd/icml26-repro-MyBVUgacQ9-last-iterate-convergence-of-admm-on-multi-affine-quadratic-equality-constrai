@@ -19,7 +19,11 @@ def build(spec: dict):
         from repro.problems.toy import random_maqep
         kw = {k: v for k, v in spec.items() if k not in ("kind", "x0")}
         p = random_maqep(**kw)
-        return p, np.zeros(p.n_x)
+        x0 = np.zeros(p.n_x)
+        if spec.get("box_bounds") is not None:      # start strictly inside the box
+            lo, hi = spec["box_bounds"]
+            x0 = np.full(p.n_x, 0.5 * (lo + hi))
+        return p, x0
     if kind == "toy":
         from repro.problems.toy import toy_q, toy_q_ball, toy_q_boxed
         mux, muz = spec.get("mu_x", 1.0), spec.get("mu_z", 1.0)

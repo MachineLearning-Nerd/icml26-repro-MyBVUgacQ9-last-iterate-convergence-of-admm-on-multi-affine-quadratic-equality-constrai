@@ -88,7 +88,8 @@ B3_SPEC = dict(
 def random_maqep(n_blocks: int, block_size: int, n_c: int, n_z: int,
                  c_scale: float = 1.0, seed: int = 0, density: float = 0.2,
                  mu_f: float = 1.0, mu_phi: float = 1.0,
-                 with_box: bool = False, box_halfwidth: float = 3.0) -> MAQEP:
+                 with_box: bool = False, box_halfwidth: float = 3.0,
+                 box_bounds=None) -> MAQEP:
     """A random instance of eq. (1) satisfying Assumptions 2.3 and 2.6.
 
     Every C_j is built block-off-diagonal by construction (Definition 2.1) and
@@ -126,8 +127,13 @@ def random_maqep(n_blocks: int, block_size: int, n_c: int, n_z: int,
     Bs = rng.standard_normal((n_z, n_z)) / np.sqrt(n_z)
     S = mu_phi * np.eye(n_z) + 0.5 * (Bs @ Bs.T)
 
-    sets = ([box(-box_halfwidth, box_halfwidth, block_size) for _ in range(n_blocks)]
-            if with_box else [FreeSet(block_size) for _ in range(n_blocks)])
+    if box_bounds is not None:          # asymmetric box, active at the solution
+        lo, hi = box_bounds
+        sets = [box(lo, hi, block_size) for _ in range(n_blocks)]
+    elif with_box:
+        sets = [box(-box_halfwidth, box_halfwidth, block_size) for _ in range(n_blocks)]
+    else:
+        sets = [FreeSet(block_size) for _ in range(n_blocks)]
 
     return MAQEP(P=P, p=rng.standard_normal(n_x) * 0.1, S=S,
                  s=rng.standard_normal(n_z) * 0.1,
