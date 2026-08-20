@@ -8,6 +8,39 @@ on CPU only.
 · **Report:** [`reports/last-iterate-admm/report.md`](reports/last-iterate-admm/report.md)
 · **Notebook:** [`notebooks/reproduction.py`](notebooks/reproduction.py)
 
+## Collection classification and audit boundary
+
+This repository is the **legacy/source workspace** for the ICML 2026 paper
+*Last-Iterate Convergence of ADMM on Multi-affine Quadratic Equality-Constrained
+Problems* (arXiv `2603.11919`, OpenReview `MyBVUgacQ9`). It is preserved
+separately from the standardized canonical record at
+[`icml26-admm-multiaffine-convergence`](https://github.com/MachineLearning-Nerd/icml26-admm-multiaffine-convergence).
+
+The claim table below records this workspace's historical campaign and its
+self-assessment. It is not a new paper-level verification performed while
+organizing the collection. The collection audit did not run the scientific
+implementation; consult the canonical record for the scoped finite-diagnostic
+status and limitations.
+
+### How the historical claims are produced
+
+The production path is:
+
+1. `repro/core.py`, `rates.py`, and `problems/` define the ADMM problem,
+   rate instrumentation, and finite instance families.
+2. `repro/claims/claim{1..6}.py` each define a claim contract, sweep,
+   negative control, and verdict.
+3. `repro/checker.py` independently re-derives verdicts from extracted raw
+   artifacts; `extract_bundle.py` obtains those artifacts from a run log.
+4. The pinned `uv` entry points publish CSV/JSON evidence, figures, `EVAL.md`,
+   and `reports/last-iterate-admm/report.md`.
+
+The former `orx/*` branches represent the baseline and claim-specific
+experiments. Their purposes and tips are preserved in
+[`BRANCH_AUDIT.md`](BRANCH_AUDIT.md). Citation and acknowledgment details are
+in [`CITATION.cff`](CITATION.cff) and
+[`AUTHOR_THANK_YOU.md`](AUTHOR_THANK_YOU.md).
+
 ## Reproduction status
 
 Previous live judged score: **6/12** (all six claims rated TOY). Current self-assessment

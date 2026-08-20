@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+title: "Legacy/source workspace for Last-Iterate Convergence of ADMM on Multi-affine Quadratic Equality-Constrained Problems"
+type: software
+authors:
+  - family-names: Chao
+    given-names: Yutong
+  - family-names: Ciebielski
+    given-names: Michal
+  - family-names: Etesami
+    given-names: Jalal
+  - family-names: Khadiv
+    given-names: Majid
+repository-code: "https://github.com/MachineLearning-Nerd/icml26-legacy-admm-multiaffine"
+url: "https://github.com/MachineLearning-Nerd/icml26-legacy-admm-multiaffine"
+abstract: "Legacy/source workspace preserving the implementation, reports, and branch history for the associated ICML 2026 reproduction record."
+keywords:
+  - ADMM
+  - multi-affine quadratic problems
+  - last-iterate convergence
+  - reproduction
+references:
+  - type: article
+    title: "Last-Iterate Convergence of ADMM on Multi-affine Quadratic Equality-Constrained Problems"
+    authors:
+      - family-names: Chao
+        given-names: Yutong
+      - family-names: Ciebielski
+        given-names: Michal
+      - family-names: Etesami
+        given-names: Jalal
+      - family-names: Khadiv
+        given-names: Majid
+    identifiers:
+      - type: arxiv
+        value: "2603.11919"
+    url: "https://arxiv.org/abs/2603.11919"
