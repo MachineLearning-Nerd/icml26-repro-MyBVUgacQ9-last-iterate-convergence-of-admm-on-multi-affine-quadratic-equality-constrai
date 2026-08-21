@@ -41,6 +41,10 @@ experiments. Their purposes and tips are preserved in
 in [`CITATION.cff`](CITATION.cff) and
 [`AUTHOR_THANK_YOU.md`](AUTHOR_THANK_YOU.md).
 
+## Thank you
+
+Thank you to the paper authors for making this research available for study. The full acknowledgment is in [`AUTHOR_THANK_YOU.md`](AUTHOR_THANK_YOU.md).
+
 ## Reproduction status
 
 Previous live judged score: **6/12** (all six claims rated TOY). Current self-assessment
